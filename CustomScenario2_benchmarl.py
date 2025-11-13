@@ -465,10 +465,11 @@ experiment_config = ExperimentConfig.get_from_yaml() # We start by loading the d
 experiment_config.sampling_device = vmas_device
 experiment_config.train_device = train_device
 
-experiment_config.max_n_frames = 10_000_000 # Number of frames before training ends
+# experiment_config.max_n_frames = 10_000_000 # Number of frames before training ends
 experiment_config.gamma = 0.99
-experiment_config.on_policy_collected_frames_per_batch = 60_000 # Number of frames collected each iteration
-experiment_config.on_policy_n_envs_per_worker = 600 # Number of vmas vectorized enviornemnts (each will collect 100 steps, see max_steps in task_config -> 600 * 100 = 60_000 the number above)
+# experiment_config.max_n_iters= 3
+experiment_config.on_policy_collected_frames_per_batch = 20_000 # Number of frames collected each iteration
+experiment_config.on_policy_n_envs_per_worker = 400 # Number of vmas vectorized enviornemnts (each will collect 100 steps, see max_steps in task_config -> 600 * 100 = 60_000 the number above)
 experiment_config.on_policy_n_minibatch_iters = 45
 experiment_config.on_policy_minibatch_size = 4096
 experiment_config.evaluation = True
@@ -483,9 +484,9 @@ task = VmasTask.NAVIGATION.get_from_yaml()
 
 # We override the NAVIGATION config with ours
 task.config = {
-        "max_steps": 100,
+        "max_steps": 400,
         "n_agents_holonomic": 1,
-        "n_agents_diff_drive": 1,
+        "n_agents_diff_drive": 2,
         "n_agents_car": 1,
         "n_obstacles" : 2,
         "lidar_range": 0.35,
@@ -525,9 +526,9 @@ critic_model_config = MlpConfig.get_from_yaml()
 
 from benchmarl.experiment import Experiment
 
-experiment_config.max_n_frames = 6_000 # Runs one iteration, change to 50_000_000 for full training
-experiment_config.on_policy_n_envs_per_worker = 60 # Remove this line for full training
-experiment_config.on_policy_n_minibatch_iters = 1 # Remove this line for full training
+experiment_config.max_n_frames = 5_000_000 # Runs one iteration, change to 50_000_000 for full training
+# experiment_config.on_policy_n_envs_per_worker = 60 # Remove this line for full training
+# experiment_config.on_policy_n_minibatch_iters = 10 # Remove this line for full training
 
 experiment = Experiment(
     task=task,
@@ -540,6 +541,8 @@ experiment = Experiment(
 
 
 experiment.run()
+
+
 
 #print("Getting a directory of experiment", dir(experiment))
 #print("Getting the experiments observation spec",experiment.observation_spec)
@@ -559,7 +562,7 @@ device="cpu"
 
 # @title Scenario parameters
 n_agents_holonomic = 1 # @param {"type":"integer"}
-n_agents_diff_drive = 1 # @param {"type":"integer"}
+n_agents_diff_drive = 2 # @param {"type":"integer"}
 n_agents_car = 1 # @param {"type":"integer"}
 n_obstacles = 2 # @param {"type":"integer"}
 
@@ -570,7 +573,7 @@ num_envs = 8 # @param {"type":"integer"}
 from vmas import make_env
 import matplotlib.pyplot as plt
 
-env = make_env(
+env = VmasEnv(
     scenario=MyScenario(),
     num_envs=num_envs,
     device=vmas_device,
@@ -589,47 +592,73 @@ env = make_env(
     n_obstacles=n_obstacles
 )
 
+# print("model parameters",trained_policy.parameters())
+# for s in trained_policy.parameters():
+#     print(s.shape,s)
 
-trained_policy.eval()
+# print("parameter 0", trained_policy.parameters()[0])
+# print("parameter 1", trained_policy.parameters()[1])
 
-
-obs = env.reset()
-
-
-#print("obs is a list of length",len(obs))
-print("First Element", obs[0])
-print("Second Element", obs[1])
-print("Third Element", obs[2])
-
-
-print("First Element shape", len(obs[0]))
-print("Second Element shape", len(obs[1]))
-print("Third Element shape", len(obs[2]))
+# print("those were the parameters of the model, now the state dict==================")
+# print(trained_policy.state_dict())
+#
 
 
 
-
-
-
-
-done = False
-
-while not done:
+i = 0
+while(i < 1000):
     with torch.no_grad():
-        actions = trained_policy(obs)
-        # actions = trained_policy.get_actions(obs)    #suggested by pycharm
-        # actions = trained_policy(obs)                 # suggested by chatGPT
-        # actions = trained_policy(obs)                   # suggested by perplexity - same as chat GPT
+       env.rollout(
+           max_steps=experiment.max_steps,
+           policy=trained_policy,
+           callback=lambda env, _: env.render(),
+           auto_cast_to_device=True,
+           break_when_any_done=False,
+       )
+    i += 1
 
 
-    obs, rewards, dones, info = env.step(actions)
-    dones = dones.any()
-
-    frame = env.render(mode="rgb_array")
-    plt.imshow(frame)
-    plt.pause(0.01)
-env.close()
-plt.close()
+#
+# trained_policy.eval()
+#
+#
+# obs = env.reset()
+#
+#
+# #print("obs is a list of length",len(obs))
+# # print("First Element", obs[0])
+# # print("Second Element", obs[1])
+# # print("Third Element", obs[2])
+# #
+# #
+# # print("First Element shape", len(obs[0]))
+# # print("Second Element shape", len(obs[1]))
+# # print("Third Element shape", len(obs[2]))
+#
+#
+#
+#
+#
+#
+#
+# done = False
+#
+# while not done:
+#     with torch.no_grad():
+#         actions = trained_policy(obs)
+#         # actions = trained_policy.get_actions(obs)    #suggested by pycharm
+#         # actions = trained_policy(obs)                 # suggested by chatGPT
+#         # actions = trained_policy(obs)                   # suggested by perplexity - same as chat GPT
+#
+#
+#     obs, rewards, dones, info = env.step(actions)
+#     dones = dones.any()
+#
+#     frame = env.render(mode="rgb_array")
+#     plt.imshow(frame)
+#     plt.pause(0.01)
+# env.close()
+# plt.close()
 
 
 

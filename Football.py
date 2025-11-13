@@ -41,20 +41,20 @@ print("vmas_device is ", vmas_device)
 
 # Sampling
 frames_per_batch = 20_000  # Number of team frames collected per training iteration
-n_iters = 30  # Number of sampling and training iterations
+n_iters = 500  # Number of sampling and training iterations
 total_frames = frames_per_batch * n_iters
 
 # Training
-num_epochs = 8  # Number of optimization steps per training iteration
-minibatch_size = 600  # Size of the mini-batches in each optimization step
-lr = 3e-4  # Learning rate
-max_grad_norm = 1.0  # Maximum norm for the gradients
+num_epochs = 4  # Number of optimization steps per training iteration
+minibatch_size = 1000  # Size of the mini-batches in each optimization step
+lr = 2e-4  # Learning rate
+max_grad_norm = 0.5  # Maximum norm for the gradients
 
 # PPO
 clip_epsilon = 0.2  # clip value for PPO loss
-gamma = 0.95  # discount factor
-lmbda = 0.9  # lambda for generalised advantage estimation
-entropy_eps = 0.1  # coefficient of the entropy term in the PPO loss
+gamma = 0.99  # discount factor
+lmbda = 0.95  # lambda for generalised advantage estimation
+entropy_eps = 0.05  # coefficient of the entropy term in the PPO loss
 
 # disable log-prob aggregation
 set_composite_lp_aggregate(False).set()
@@ -65,9 +65,10 @@ num_vmas_envs = (
 )  # Number of vectorized envs. frames_per_batch should be divisible by this number
 scenario_name = "football"
 
+#environment parameters
 control_two_agents=True
-n_blue_agents=5
-n_red_agents=1
+n_blue_agents=3
+n_red_agents=0
 ai_blue_agents=False
 ai_red_agents=True
 ai_strength=1
@@ -97,19 +98,21 @@ env = VmasEnv(
 
 
 
-# print("action_spec:", env.full_action_spec)
-# print("what the fk does this do: ",env.full_action_spec[env.action_key].shape[-1])
+#print("action_spec:", env.full_action_spec)
+#print("what the fk does this do: ",env.full_action_spec[env.action_key].shape[-1])
 
-# print("reward_spec:", env.full_reward_spec)
-# print("done_spec:", env.full_done_spec)
+
+#print("reward_spec:", env.full_reward_spec)
+#print("done_spec:", env.full_done_spec)
 # print("observation_spec:", env.observation_spec)
 
 
 
-# print("action_keys:", env.action_keys)
-# print("reward_keys:", env.reward_keys)
-# print("done_keys:", env.done_keys)
+#print("action_keys:", env.action_keys)
+#print("reward_keys:", env.reward_keys)
+#print("done_keys:", env.done_keys)
 
+#exit (0)
 
 
 env = TransformedEnv(
@@ -129,6 +132,19 @@ check_env_specs(env)
 # POLICY / ACTOR
 
 share_parameters_policy = True
+
+# debugging
+
+#print ("observation spec shape ", env.observation_spec["agent_blue", "observation"].shape[-1])
+
+#print ("observation spec ", env.observation_spec["agent_blue", "observation"])
+
+#print ("observation spec raw ", env.observation_spec)
+
+#print("n_agents", env.n_agents)
+#print("red ones ", n_red_agents)
+#print("blue ones ",n_blue_agents)
+#exit (0)
 
 policy_net = torch.nn.Sequential(
     MultiAgentMLP(

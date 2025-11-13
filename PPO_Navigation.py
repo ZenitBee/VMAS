@@ -41,11 +41,11 @@ print("vmas_device is ", vmas_device)
 
 # Sampling
 frames_per_batch = 6_000  # Number of team frames collected per training iteration
-n_iters = 15  # Number of sampling and training iterations
+n_iters = 1000  # Number of sampling and training iterations
 total_frames = frames_per_batch * n_iters
 
 # Training
-num_epochs = 15  # Number of optimization steps per training iteration
+num_epochs = 10  # Number of optimization steps per training iteration
 minibatch_size = 400  # Size of the mini-batches in each optimization step
 lr = 3e-4  # Learning rate
 max_grad_norm = 1.0  # Maximum norm for the gradients
@@ -54,17 +54,18 @@ max_grad_norm = 1.0  # Maximum norm for the gradients
 clip_epsilon = 0.2  # clip value for PPO loss
 gamma = 0.99  # discount factor
 lmbda = 0.9  # lambda for generalised advantage estimation
-entropy_eps = 1e-4  # coefficient of the entropy term in the PPO loss
+entropy_eps = 0.01  # coefficient of the entropy term in the PPO loss
 
 # disable log-prob aggregation
 set_composite_lp_aggregate(False).set()
 
-max_steps = 100  # Episode steps before done
+max_steps = 500  # Episode steps before done
 num_vmas_envs = (
     frames_per_batch // max_steps
 )  # Number of vectorized envs. frames_per_batch should be divisible by this number
 scenario_name = "navigation"
-n_agents = 10
+n_passages = 5
+shared_reward = False
 
 env = VmasEnv(
     scenario=scenario_name,
@@ -73,18 +74,24 @@ env = VmasEnv(
     max_steps=max_steps,
     device=vmas_device,
     # Scenario kwargs
-    n_agents=n_agents,  # These are custom kwargs that change for each VMAS scenario, see the VMAS repo to know more.
+    n_passages = n_passages,  # These are custom kwargs that change for each VMAS scenario, see the VMAS repo to know more.
+    shared_reward = shared_reward
 )
 
-print("action_spec:", env.full_action_spec)
-print("what the fk does this do: ",env.full_action_spec[env.action_key].shape[-1])
-# print("reward_spec:", env.full_reward_spec)
-# print("done_spec:", env.full_done_spec)
-# print("observation_spec:", env.observation_spec)
 
-# print("action_keys:", env.action_keys)
-# print("reward_keys:", env.reward_keys)
-# print("done_keys:", env.done_keys)
+#
+# print("action_spec:", env.full_action_spec)
+# print("what the fk does this do: ",env.full_action_spec[env.action_key].shape[-1])
+
+#print("reward_spec:", env.full_reward_spec)
+#print("done_spec:", env.full_done_spec)
+#print("observation_spec:", env.observation_spec)
+
+print("action_keys:", env.action_keys)
+print("reward_keys:", env.reward_keys)
+print("done_keys:", env.done_keys)
+
+exit(0)
 
 env = TransformedEnv(
     env,
@@ -93,14 +100,35 @@ env = TransformedEnv(
 
 check_env_specs(env)
 
-n_rollout_steps = 5
-rollout = env.rollout(n_rollout_steps)
+
+
+# n_rollout_steps = 5
+# rollout = env.rollout(n_rollout_steps)
 # print("rollout of three steps:", rollout)
 # print("Shape of the rollout TensorDict:", rollout.batch_size)
 
 # POLICY / ACTOR
 
 share_parameters_policy = True
+
+
+# debugging
+
+#print ("observation spec shape ", env.observation_spec["agent_blue", "observation"].shape[-1])
+
+#print ("observation spec ", env.observation_spec["agent_blue", "observation"])
+
+print ("observation spec raw ", env.observation_spec)
+
+#print("n_agents", env.n_agents)
+#print("red ones ", n_red_agents)
+#print("blue ones ",n_blue_agents)
+exit (0)
+
+
+
+
+
 
 policy_net = torch.nn.Sequential(
     MultiAgentMLP(
@@ -114,7 +142,7 @@ policy_net = torch.nn.Sequential(
         share_params=share_parameters_policy,
         device=device,
         depth=2,
-        num_cells=256,
+        num_cells=128,
         activation_class=torch.nn.Tanh,
     ),
     NormalParamExtractor(),  # this will just separate the last dimension into two outputs: a loc and a non-negative scale
@@ -139,6 +167,10 @@ policy = ProbabilisticActor(
     return_log_prob=True,
 )  # we'll need the log-prob for the PPO loss
 
+# print("======= actor ===========")
+# print(policy.state_dict())
+
+
 # CRITIC
 
 share_parameters_critic = True
@@ -151,8 +183,8 @@ critic_net = MultiAgentMLP(
     centralised=mappo,
     share_params=share_parameters_critic,
     device=device,
-    depth=2,
-    num_cells=256,
+    depth=3,
+    num_cells=128,
     activation_class=torch.nn.Tanh,
 )
 
@@ -161,6 +193,11 @@ critic = TensorDictModule(
     in_keys=[("agents", "observation")],
     out_keys=[("agents", "state_value")],
 )
+
+# print("=======critic===========")
+# print(critic.state_dict())
+
+
 
 # print("Running policy:", policy(env.reset()))
 # print("Running value:", critic(env.reset()))
@@ -193,7 +230,7 @@ loss_module = ClipPPOLoss(
     critic_network=critic,
     clip_epsilon=clip_epsilon,
     entropy_coeff=entropy_eps,
-    normalize_advantage=False,  # Important to avoid normalizing across the agent dimension
+    normalize_advantage=False,  # Important to avoid normalizing across the agent dimension (changed to true)
 )
 loss_module.set_keys(  # We have to tell the loss where to find the keys
     reward=env.reward_key,
@@ -214,6 +251,7 @@ optim = torch.optim.Adam(loss_module.parameters(), lr)
 
 pbar = tqdm(total=n_iters, desc="episode_reward_mean = 0")
 
+episode_reward_max=-1000
 episode_reward_mean_list = []
 for tensordict_data in collector:
     tensordict_data.set(
@@ -267,24 +305,67 @@ for tensordict_data in collector:
     episode_reward_mean = (
         tensordict_data.get(("next", "agents", "episode_reward"))[done].mean().item()
     )
+    if episode_reward_mean > episode_reward_max:
+        episode_reward_max = episode_reward_mean
     episode_reward_mean_list.append(episode_reward_mean)
     pbar.set_description(f"episode_reward_mean = {episode_reward_mean}", refresh=False)
     pbar.update()
 
 
+# print("======= actor after training===========")
+# print(policy.state_dict())
+
+# new_module = torch.load("PPO_navigation_policy.pt",in_keys=[("agents", "observation")],
+#     out_keys=[("agents", "loc"), ("agents", "scale")],)
+# new_actor = ProbabilisticActor(new_module)
+#
+
+
+
+torch.save(policy, "PPO_navigation_policy.pt")
+new_policy = torch.load("PPO_navigation_policy.pt", weights_only= False)
+
+
+
+print(type(new_policy))
+new_policy.eval()
+
+
+#
+#
+# obs = env.reset()
+# done = False
+# print(new_policy(obs).get("action"))
+# print(new_policy(obs).keys())
+#
+#
+# while not done:
+#     with torch.no_grad():
+#         dist = new_policy(obs)
+#         actions_dist = dist.get("action_key")
+#         actions = actions_dist.sample()
+#
+#     obs, rewards, dones, info = env.step(actions)
+#     done = dones.any()
+
+
+
+
+print(episode_reward_max)
 plt.plot(episode_reward_mean_list)
 plt.xlabel("Training iterations")
 plt.ylabel("Reward")
 plt.title("Episode reward mean")
 plt.show()
 
-while(True):
+i = 0
+while(i < 10):
     with torch.no_grad():
        env.rollout(
            max_steps=max_steps,
-           policy=policy,
+           policy=new_policy,
            callback=lambda env, _: env.render(),
            auto_cast_to_device=True,
            break_when_any_done=False,
        )
-
+    i += 1
