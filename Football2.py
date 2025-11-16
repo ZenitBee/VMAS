@@ -43,41 +43,42 @@ vmas_device = device  # The device where the simulator is run (VMAS can run on G
 print("vmas_device is ", vmas_device)
 
 # Sampling
-frames_per_batch = 20_000  # Number of team frames collected per training iteration
-n_iters = 500  # Number of sampling and training iterations
+frames_per_batch = 32_000  # Number of team frames collected per training iteration
+n_iters = 1  # Number of sampling and training iterations
 total_frames = frames_per_batch * n_iters
 
 # Training
-num_epochs = 4  # Number of optimization steps per training iteration
-minibatch_size = 1000  # Size of the mini-batches in each optimization step
-lr = 2e-4  # Learning rate
+num_epochs = 8  # Number of optimization steps per training iteration
+minibatch_size = 6000  # Size of the mini-batches in each optimization step
+lr = 3e-4  # Learning rate
 max_grad_norm = 0.5  # Maximum norm for the gradients
 
 # PPO
 clip_epsilon = 0.2  # clip value for PPO loss
 gamma = 0.99  # discount factor
 lmbda = 0.95  # lambda for generalised advantage estimation
-entropy_eps = 0.05  # coefficient of the entropy term in the PPO loss
+entropy_eps = 0.01  # coefficient of the entropy term in the PPO loss
 
 # disable log-prob aggregation
 set_composite_lp_aggregate(False).set()
 
-max_steps = 1000  # Episode steps before done
+max_steps = 800  # Episode steps before done
 num_vmas_envs = (
     frames_per_batch // max_steps
 )  # Number of vectorized envs. frames_per_batch should be divisible by this number
 scenario_name = "football"
 
 #environment parameters
-control_two_agents=True
-n_blue_agents=2
-n_red_agents=0
+n_blue_agents=5
+n_red_agents=5
 ai_blue_agents=False
 ai_red_agents=True
 ai_strength=1
 ai_decision_strength=1
 ai_precision_strength=1
 n_traj_points=8
+physically_different=True
+enable_shooting=False
 
 
 env = VmasEnv(
@@ -94,7 +95,9 @@ env = VmasEnv(
     ai_strength=ai_strength,
     ai_decision_strength=ai_decision_strength,
     ai_precision_strength=ai_precision_strength,
-    n_traj_points=n_traj_points
+    n_traj_points=n_traj_points,
+    physically_different=physically_different,
+    enable_shooting=enable_shooting
 
 
 )
@@ -156,67 +159,62 @@ share_parameters_policy = True
 #exit (0)
 
 
-#print(env.observation_spec["agent_blue", "observation"].shape[-1])
-#print(env.observation_spec["agent_blue", "observation"].shape)
+print(env.observation_spec["agent_blue", "observation"].shape[-1])
+print(env.observation_spec["agent_blue", "observation"].shape)
 
+
+
+class DebugLayer1(torch.nn.Module):
+    DebugLineCounter = 0
+
+    def forward(self, x):
+        #print(self.DebugLineCounter,f"DebugLayer input shape: {x.shape}",end=" ")
+        #self.DebugLineCounter += 1
+        return x
+
+class DebugLayer2(torch.nn.Module):
+    def forward(self, x):
+        #print(f"DebugLayer output shape: {x.shape}")
+        #print(x)
+        return x
 
 policy_net = torch.nn.Sequential(
+    DebugLayer1(),
     MultiAgentMLP(
         n_agent_inputs=env.observation_spec["agent_blue", "observation"].shape[-1],  # n_obs_per_agent
-        n_agent_outputs=4,  # one output per discrete action
+        n_agent_outputs=9,  # one output per discrete action
         n_agents=env.n_agents,
         centralised=False,  # decentralized agents using their own observations
         share_params=share_parameters_policy,
         device=device,
         depth=2,
-        num_cells=256,
+        num_cells=128,
         activation_class=torch.nn.Tanh,
-    )
+    ),
+    DebugLayer2(),
     # No NormalParamExtractor here because output is logits for discrete actions
 )
 
-''' this is the old version of policy_net that uses a continuous action space
-policy_net = torch.nn.Sequential(
-    MultiAgentMLP(
-        n_agent_inputs=env.observation_spec["agent_blue", "observation"].shape[
-            -1
-        ],  # n_obs_per_agent
-        n_agent_outputs=2
-        * env.full_action_spec[env.action_key].shape[-1],  # 2 * n_actions_per_agents
-        n_agents=env.n_agents,
-        centralised=False,  # the policies are decentralised (ie each agent will act from its observation)
-        share_params=share_parameters_policy,
-        device=device,
-        depth=2,
-        num_cells=256,
-        activation_class=torch.nn.Tanh,
-    ),
-    NormalParamExtractor(),  # this will just separate the last dimension into two outputs: a loc and a non-negative scale
-)
-'''
-
 
 policy_module = TensorDictModule(
     policy_net,
     in_keys=[("agent_blue", "observation")],
-    out_keys=[("agent_blue", "action_logits")],  # logits for Categorical distribution
+    out_keys=[("agent_blue", "logits")],  # logits for Categorical distribution
 )
 
-''' old continuous version of policy module
-policy_module = TensorDictModule(
-    policy_net,
-    in_keys=[("agent_blue", "observation")],
-    out_keys=[("agent_blue", "loc"), ("agent_blue", "scale")],
-)
-'''
-print("Action Spec 1: ", env.action_spec_unbatched["agent_blue"])
-print("Action Spec 2: ", env.action_spec_unbatched["agent_blue"]["action"])
-exit(0)
+
+#print("Action Spec 1: ", env.action_spec_unbatched["agent_blue"])
+#print("Action Spec 2: ", env.action_spec_unbatched["agent_blue"]["action"])
+
+
+print ("ACTION SPEC: ", env.action_spec_unbatched)
+print ("ACTION KEY", env.action_key)
+
 
 policy = ProbabilisticActor(
     module=policy_module,
     spec=env.action_spec_unbatched,
-    in_keys=[("agent_blue", "action_logits")],  # logits for discrete actions
+    in_keys=[("agent_blue", "logits")],  # logits for discrete actions
     out_keys=[env.action_key],
     distribution_class=Categorical,
     distribution_kwargs={},  # Categorical uses 'logits' from forward pass
@@ -224,20 +222,6 @@ policy = ProbabilisticActor(
 )
 
 
-'''  old continuous version of policy 
-policy = ProbabilisticActor(
-    module=policy_module,
-    spec=env.action_spec_unbatched,
-    in_keys=[("agent_blue", "loc"), ("agent_blue", "scale")],
-    out_keys=[env.action_key],
-    distribution_class=TanhNormal,
-    distribution_kwargs={
-        "low": env.full_action_spec_unbatched[env.action_key].space.low,
-        "high": env.full_action_spec_unbatched[env.action_key].space.high,
-    },
-    return_log_prob=True,
-)  # we'll need the log-prob for the PPO loss
-'''
 
 # print("======= actor ===========")
 # print(policy.state_dict())
@@ -278,7 +262,7 @@ critic = TensorDictModule(
 
 print("Policy is:", policy)
 print("Env.action is:", env.action_key)
-exit(0)
+
 
 # DATA COLLECTOR
 

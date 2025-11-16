@@ -67,7 +67,7 @@ scenario_name = "football"
 
 #environment parameters
 control_two_agents=True
-n_blue_agents=3
+n_blue_agents=2
 n_red_agents=0
 ai_blue_agents=False
 ai_red_agents=True
