@@ -72,7 +72,7 @@ scenario_name = "football"
 n_blue_agents=5
 n_red_agents=5
 ai_blue_agents=False
-ai_red_agents=True
+ai_red_agents=False
 ai_strength=1
 ai_decision_strength=1
 ai_precision_strength=1
@@ -104,29 +104,27 @@ env = VmasEnv(
 
 
 
-#print("action_spec:", env.full_action_spec)
+# print("action_spec:", env.full_action_spec)
 #print("what the fk does this do: ",env.full_action_spec[env.action_key].shape[-1])
+#print("what the fk does this do: ",env.full_action_spec[env.action_keys].shape[-1])
+print("what is it?", env.action_keys)
+#exit(0)
 
-
-#print("reward_spec:", env.full_reward_spec)
-#print("done_spec:", env.full_done_spec)
+# print("reward_spec:", env.full_reward_spec)
+# print("done_spec:", env.full_done_spec)
 # print("observation_spec:", env.observation_spec)
+# print("action_keys:", env.action_keys)
+# print("reward_keys:", env.reward_keys)
+# print("done_keys:", env.done_keys)
+# print("env.observation spec", env.observation_spec)
+
+#print(env.reward_keys)
 
 
-
-#print("action_keys:", env.action_keys)
-#print("reward_keys:", env.reward_keys)
-#print("done_keys:", env.done_keys)
-
-#exit (0)
-
-
-
-#print("env.observation spec", env.observation_spec)
 
 env = TransformedEnv(
     env,
-    RewardSum(in_keys=[env.reward_key], out_keys=[("agent_blue", "episode_reward")]),
+    RewardSum(in_keys=env.reward_keys, out_keys=[("agent_blue", "episode_reward"), ("agent_red", "episode_reward")]),
 )
 
 check_env_specs(env)
@@ -195,11 +193,34 @@ policy_net = torch.nn.Sequential(
     # No NormalParamExtractor here because output is logits for discrete actions
 )
 
+policy_net2 = torch.nn.Sequential(
+    #DebugLayer1(),
+    MultiAgentMLP(
+        n_agent_inputs=env.observation_spec["agent_red", "observation"].shape[-1],  # n_obs_per_agent
+        n_agent_outputs=9,  # one output per discrete action
+        n_agents=env.n_agents,
+        centralised=False,  # decentralized agents using their own observations
+        share_params=share_parameters_policy,
+        device=device,
+        depth=2,
+        num_cells=128,
+        activation_class=torch.nn.Tanh,
+    ),
+    #DebugLayer2(),
+    # No NormalParamExtractor here because output is logits for discrete actions
+)
+
 
 policy_module = TensorDictModule(
     policy_net,
     in_keys=[("agent_blue", "observation")],
     out_keys=[("agent_blue", "logits")],  # logits for Categorical distribution
+)
+
+policy_module2 = TensorDictModule(
+    policy_net2,
+    in_keys=[("agent_red", "observation")],
+    out_keys=[("agent_red", "logits")],  # logits for Categorical distribution
 )
 
 
@@ -211,17 +232,35 @@ policy_module = TensorDictModule(
 #print ("ACTION KEY", env.action_key)
 
 
+#print(env.action_spec_unbatched["agent_blue"]["action"])
+# what we want is  {('agent_blue', 'action')}
+# error is got: {('agent_blue', 'action'), 'action'} and {('agent_blue', 'action')} respectively
+
+from torchrl.data import CompositeSpec, DiscreteTensorSpec
+
 policy = ProbabilisticActor(
     module=policy_module,
-    spec=env.action_spec_unbatched,
+    #spec=env.action_spec_unbatched["agent_blue"],
+    # spec={('agent_blue', 'action')},
+ 
     in_keys=[("agent_blue", "logits")],  # logits for discrete actions
-    out_keys=[env.action_key],
+    out_keys=env.action_keys[0],
     distribution_class=Categorical,
     distribution_kwargs={},  # Categorical uses 'logits' from forward pass
     return_log_prob=True,
 )
 
+policy2 = ProbabilisticActor(
+    module=policy_module2,
+    spec=env.action_spec_unbatched,
+    in_keys=[("agent_red", "logits")],  # logits for discrete actions
+    out_keys=env.action_keys[1],
+    distribution_class=Categorical,
+    distribution_kwargs={},  # Categorical uses 'logits' from forward pass
+    return_log_prob=True,
+)
 
+exit(0)
 
 # print("======= actor ===========")
 # print(policy.state_dict())
@@ -248,6 +287,24 @@ critic = TensorDictModule(
     module=critic_net,
     in_keys=[("agent_blue", "observation")],
     out_keys=[("agent_blue", "state_value")],
+)
+
+critic_net2 = MultiAgentMLP(
+    n_agent_inputs=env.observation_spec["agent_red", "observation"].shape[-1],
+    n_agent_outputs=1,  # 1 value per agent
+    n_agents=env.n_agents,
+    centralised=mappo,
+    share_params=share_parameters_critic,
+    device=device,
+    depth=2,
+    num_cells=256,
+    activation_class=torch.nn.Tanh,
+)
+
+critic2 = TensorDictModule(
+    module=critic_net2,
+    in_keys=[("agent_red", "observation")],
+    out_keys=[("agent_red", "state_value")],
 )
 
 # print("=======critic===========")
@@ -294,7 +351,25 @@ loss_module = ClipPPOLoss(
     entropy_coeff=entropy_eps,
     normalize_advantage=False,  # Important to avoid normalizing across the agent dimension
 )
+
+loss_module2 = ClipPPOLoss(
+    actor_network=policy2,
+    critic_network=critic2,
+    clip_epsilon=clip_epsilon,
+    entropy_coeff=entropy_eps,
+    normalize_advantage=False,  # Important to avoid normalizing across the agent dimension
+)
+
 loss_module.set_keys(  # We have to tell the loss where to find the keys
+    reward=env.reward_key,
+    action=env.action_key,
+    value=("agent_blue", "state_value"),
+    # These last 2 keys will be expanded to match the reward shape
+    done=("agent_blue", "done"),
+    terminated=("agent_blue", "terminated"),
+)
+#====================================================================
+loss_module2.set_keys(  # We have to tell the loss where to find the keys
     reward=env.reward_key,
     action=env.action_key,
     value=("agent_blue", "state_value"),

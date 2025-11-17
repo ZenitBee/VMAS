@@ -77,7 +77,7 @@ ai_strength=1
 ai_decision_strength=1
 ai_precision_strength=1
 n_traj_points=8
-physically_different=True
+physically_different=False
 enable_shooting=False
 
 
@@ -313,62 +313,64 @@ optim = torch.optim.Adam(loss_module.parameters(), lr)
 
 pbar = tqdm(total=n_iters, desc="episode_reward_mean = 0")
 
+
+
 episode_reward_mean_list = []
-for tensordict_data in collector:
-    tensordict_data.set(
-        ("next", "agent_blue", "done"),
-        tensordict_data.get(("next", "done"))
-        .unsqueeze(-1)
-        .expand(tensordict_data.get_item_shape(("next", env.reward_key))),
-    )
-    tensordict_data.set(
-        ("next", "agent_blue", "terminated"),
-        tensordict_data.get(("next", "terminated"))
-        .unsqueeze(-1)
-        .expand(tensordict_data.get_item_shape(("next", env.reward_key))),
-    )
-    # We need to expand the done and terminated to match the reward shape (this is expected by the value estimator)
-
-    with torch.no_grad():
-        GAE(
-            tensordict_data,
-            params=loss_module.critic_network_params,
-            target_params=loss_module.target_critic_network_params,
-        )  # Compute GAE and add it to the data
-
-    data_view = tensordict_data.reshape(-1)  # Flatten the batch size to shuffle data
-    replay_buffer.extend(data_view)
-
-    for _ in range(num_epochs):
-        for _ in range(frames_per_batch // minibatch_size):
-            subdata = replay_buffer.sample()
-            loss_vals = loss_module(subdata)
-
-            loss_value = (
-                loss_vals["loss_objective"]
-                + loss_vals["loss_critic"]
-                + loss_vals["loss_entropy"]
-            )
-
-            loss_value.backward()
-
-            torch.nn.utils.clip_grad_norm_(
-                loss_module.parameters(), max_grad_norm
-            )  # Optional
-
-            optim.step()
-            optim.zero_grad()
-
-    collector.update_policy_weights_()
-
-    # Logging
-    done = tensordict_data.get(("next", "agent_blue", "done"))
-    episode_reward_mean = (
-        tensordict_data.get(("next", "agent_blue", "episode_reward"))[done].mean().item()
-    )
-    episode_reward_mean_list.append(episode_reward_mean)
-    pbar.set_description(f"episode_reward_mean = {episode_reward_mean}", refresh=False)
-    pbar.update()
+# for tensordict_data in collector:
+#     tensordict_data.set(
+#         ("next", "agent_blue", "done"),
+#         tensordict_data.get(("next", "done"))
+#         .unsqueeze(-1)
+#         .expand(tensordict_data.get_item_shape(("next", env.reward_key))),
+#     )
+#     tensordict_data.set(
+#         ("next", "agent_blue", "terminated"),
+#         tensordict_data.get(("next", "terminated"))
+#         .unsqueeze(-1)
+#         .expand(tensordict_data.get_item_shape(("next", env.reward_key))),
+#     )
+#     # We need to expand the done and terminated to match the reward shape (this is expected by the value estimator)
+#
+#     with torch.no_grad():
+#         GAE(
+#             tensordict_data,
+#             params=loss_module.critic_network_params,
+#             target_params=loss_module.target_critic_network_params,
+#         )  # Compute GAE and add it to the data
+#
+#     data_view = tensordict_data.reshape(-1)  # Flatten the batch size to shuffle data
+#     replay_buffer.extend(data_view)
+#
+#     for _ in range(num_epochs):
+#         for _ in range(frames_per_batch // minibatch_size):
+#             subdata = replay_buffer.sample()
+#             loss_vals = loss_module(subdata)
+#
+#             loss_value = (
+#                 loss_vals["loss_objective"]
+#                 + loss_vals["loss_critic"]
+#                 + loss_vals["loss_entropy"]
+#             )
+#
+#             loss_value.backward()
+#
+#             torch.nn.utils.clip_grad_norm_(
+#                 loss_module.parameters(), max_grad_norm
+#             )  # Optional
+#
+#             optim.step()
+#             optim.zero_grad()
+#
+#     collector.update_policy_weights_()
+#
+#     # Logging
+#     done = tensordict_data.get(("next", "agent_blue", "done"))
+#     episode_reward_mean = (
+#         tensordict_data.get(("next", "agent_blue", "episode_reward"))[done].mean().item()
+#     )
+#     episode_reward_mean_list.append(episode_reward_mean)
+#     pbar.set_description(f"episode_reward_mean = {episode_reward_mean}", refresh=False)
+#     pbar.update()
 
 
 # print("======= actor after training===========")
@@ -381,7 +383,7 @@ for tensordict_data in collector:
 
 
 
-torch.save(policy, "PPO_navigation_policy.pt")
+#torch.save(policy, "PPO_navigation_policy.pt")
 new_policy = torch.load("PPO_navigation_policy.pt", weights_only= False)
 
 
@@ -411,17 +413,17 @@ new_policy.eval()
 
 
 
-plt.plot(episode_reward_mean_list)
-plt.xlabel("Training iterations")
-plt.ylabel("Reward")
-plt.title("Episode reward mean")
-plt.show()
+# plt.plot(episode_reward_mean_list)
+# plt.xlabel("Training iterations")
+# plt.ylabel("Reward")
+# plt.title("Episode reward mean")
+# plt.show()
 
 i = 0
-while(i < 1000):
+while(i < 2):
     with torch.no_grad():
        env.rollout(
-           max_steps=max_steps,
+           max_steps=2000,
            policy=new_policy,
            callback=lambda env, _: env.render(),
            auto_cast_to_device=True,
