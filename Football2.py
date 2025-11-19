@@ -223,8 +223,10 @@ policy = ProbabilisticActor(
 
 
 
-# print("======= actor ===========")
-# print(policy.state_dict())
+#print("======= actor ===========")
+#print(policy.state_dict())
+#print(policy)
+#exit(0)
 
 
 # CRITIC
@@ -313,6 +315,16 @@ optim = torch.optim.Adam(loss_module.parameters(), lr)
 
 pbar = tqdm(total=n_iters, desc="episode_reward_mean = 0")
 
+#some debug put in by George - to print out the tensordict structure
+# for tensordict_data in collector:
+#     print("TD:",tensordict_data)
+# exit(0)
+
+print("=====================before===================================================")
+print(collector)
+exit(0)
+print("=====================after====================================================")
+
 episode_reward_mean_list = []
 for tensordict_data in collector:
     tensordict_data.set(
@@ -328,6 +340,9 @@ for tensordict_data in collector:
         .expand(tensordict_data.get_item_shape(("next", env.reward_key))),
     )
     # We need to expand the done and terminated to match the reward shape (this is expected by the value estimator)
+
+    print(collector)
+    exit(0)
 
     with torch.no_grad():
         GAE(

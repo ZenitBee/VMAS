@@ -2,7 +2,7 @@
 import torch
 
 # Tensordict modules
-from tensordict.nn import set_composite_lp_aggregate, TensorDictModule
+from tensordict.nn import set_composite_lp_aggregate, TensorDictModule, TensorDictSequential
 from tensordict.nn.distributions import NormalParamExtractor
 from torch import multiprocessing
 
@@ -43,13 +43,13 @@ vmas_device = device  # The device where the simulator is run (VMAS can run on G
 # print("vmas_device is ", vmas_device)
 
 # Sampling
-frames_per_batch = 32_000  # Number of team frames collected per training iteration
+frames_per_batch = 30_000  # Number of team frames collected per training iteration
 n_iters = 1  # Number of sampling and training iterations
 total_frames = frames_per_batch * n_iters
 
 # Training
 num_epochs = 8  # Number of optimization steps per training iteration
-minibatch_size = 6000  # Size of the mini-batches in each optimization step
+minibatch_size = 5000  # Size of the mini-batches in each optimization step
 lr = 3e-4  # Learning rate
 max_grad_norm = 0.5  # Maximum norm for the gradients
 
@@ -77,7 +77,7 @@ ai_strength=1
 ai_decision_strength=1
 ai_precision_strength=1
 n_traj_points=8
-physically_different=True
+physically_different=False
 enable_shooting=False
 
 
@@ -102,12 +102,10 @@ env = VmasEnv(
 
 )
 
-
-
 # print("action_spec:", env.full_action_spec)
 #print("what the fk does this do: ",env.full_action_spec[env.action_key].shape[-1])
 #print("what the fk does this do: ",env.full_action_spec[env.action_keys].shape[-1])
-print("what is it?", env.action_keys)
+# print("what is it?", env.action_keys)
 #exit(0)
 
 # print("reward_spec:", env.full_reward_spec)
@@ -120,8 +118,6 @@ print("what is it?", env.action_keys)
 
 #print(env.reward_keys)
 
-
-
 env = TransformedEnv(
     env,
     RewardSum(in_keys=env.reward_keys, out_keys=[("agent_blue", "episode_reward"), ("agent_red", "episode_reward")]),
@@ -131,9 +127,6 @@ check_env_specs(env)
 
 #print("env", env)
 #print("env.observation spec", env.observation_spec)
-
-
-
 # n_rollout_steps = 5
 # rollout = env.rollout(n_rollout_steps)
 # print("rollout of three steps:", rollout)
@@ -144,44 +137,20 @@ check_env_specs(env)
 share_parameters_policy = True
 
 # debugging
-
 #print ("observation spec shape ", env.observation_spec["agent_blue", "observation"].shape[-1])
-
 #print ("observation spec ", env.observation_spec["agent_blue", "observation"])
-
 #print ("observation spec raw ", env.observation_spec)
-
 #print("n_agents", env.n_agents)
 #print("red ones ", n_red_agents)
 #print("blue ones ",n_blue_agents)
-#exit (0)
-
-
 #print(env.observation_spec["agent_blue", "observation"].shape[-1])
 #print(env.observation_spec["agent_blue", "observation"].shape)
 
-
-
-class DebugLayer1(torch.nn.Module):
-    DebugLineCounter = 0
-
-    def forward(self, x):
-        #print(self.DebugLineCounter,f"DebugLayer input shape: {x.shape}",end=" ")
-        #self.DebugLineCounter += 1
-        return x
-
-class DebugLayer2(torch.nn.Module):
-    def forward(self, x):
-        #print(f"DebugLayer output shape: {x.shape}")
-        #print(x)
-        return x
-
 policy_net = torch.nn.Sequential(
-    #DebugLayer1(),
     MultiAgentMLP(
         n_agent_inputs=env.observation_spec["agent_blue", "observation"].shape[-1],  # n_obs_per_agent
         n_agent_outputs=9,  # one output per discrete action
-        n_agents=env.n_agents,
+        n_agents=n_blue_agents,
         centralised=False,  # decentralized agents using their own observations
         share_params=share_parameters_policy,
         device=device,
@@ -189,8 +158,6 @@ policy_net = torch.nn.Sequential(
         num_cells=128,
         activation_class=torch.nn.Tanh,
     ),
-    #DebugLayer2(),
-    # No NormalParamExtractor here because output is logits for discrete actions
 )
 
 policy_net2 = torch.nn.Sequential(
@@ -198,7 +165,7 @@ policy_net2 = torch.nn.Sequential(
     MultiAgentMLP(
         n_agent_inputs=env.observation_spec["agent_red", "observation"].shape[-1],  # n_obs_per_agent
         n_agent_outputs=9,  # one output per discrete action
-        n_agents=env.n_agents,
+        n_agents=n_red_agents,
         centralised=False,  # decentralized agents using their own observations
         share_params=share_parameters_policy,
         device=device,
@@ -209,7 +176,6 @@ policy_net2 = torch.nn.Sequential(
     #DebugLayer2(),
     # No NormalParamExtractor here because output is logits for discrete actions
 )
-
 
 policy_module = TensorDictModule(
     policy_net,
@@ -240,9 +206,7 @@ from torchrl.data import CompositeSpec, DiscreteTensorSpec
 
 policy = ProbabilisticActor(
     module=policy_module,
-    #spec=env.action_spec_unbatched["agent_blue"],
-    # spec={('agent_blue', 'action')},
- 
+    # spec=env.action_spec_unbatched,
     in_keys=[("agent_blue", "logits")],  # logits for discrete actions
     out_keys=env.action_keys[0],
     distribution_class=Categorical,
@@ -252,7 +216,7 @@ policy = ProbabilisticActor(
 
 policy2 = ProbabilisticActor(
     module=policy_module2,
-    spec=env.action_spec_unbatched,
+    # spec=env.action_spec_unbatched,
     in_keys=[("agent_red", "logits")],  # logits for discrete actions
     out_keys=env.action_keys[1],
     distribution_class=Categorical,
@@ -260,7 +224,11 @@ policy2 = ProbabilisticActor(
     return_log_prob=True,
 )
 
-exit(0)
+#print("======= actor2 ===========")
+#print(policy2.state_dict())
+#print(policy2)
+#exit(0)
+
 
 # print("======= actor ===========")
 # print(policy.state_dict())
@@ -274,7 +242,19 @@ mappo = True  # IPPO if False
 critic_net = MultiAgentMLP(
     n_agent_inputs=env.observation_spec["agent_blue", "observation"].shape[-1],
     n_agent_outputs=1,  # 1 value per agent
-    n_agents=env.n_agents,
+    n_agents=n_blue_agents,
+    centralised=mappo,
+    share_params=share_parameters_critic,
+    device=device,
+    depth=2,
+    num_cells=256,
+    activation_class=torch.nn.Tanh,
+)
+
+critic_net2 = MultiAgentMLP(
+    n_agent_inputs=env.observation_spec["agent_red", "observation"].shape[-1],
+    n_agent_outputs=1,  # 1 value per agent
+    n_agents=n_red_agents,
     centralised=mappo,
     share_params=share_parameters_critic,
     device=device,
@@ -289,50 +269,32 @@ critic = TensorDictModule(
     out_keys=[("agent_blue", "state_value")],
 )
 
-critic_net2 = MultiAgentMLP(
-    n_agent_inputs=env.observation_spec["agent_red", "observation"].shape[-1],
-    n_agent_outputs=1,  # 1 value per agent
-    n_agents=env.n_agents,
-    centralised=mappo,
-    share_params=share_parameters_critic,
-    device=device,
-    depth=2,
-    num_cells=256,
-    activation_class=torch.nn.Tanh,
-)
-
 critic2 = TensorDictModule(
     module=critic_net2,
     in_keys=[("agent_red", "observation")],
     out_keys=[("agent_red", "state_value")],
 )
 
-# print("=======critic===========")
-# print(critic.state_dict())
-
-
-
-# print("Running policy:", policy(env.reset()))
-# print("Running value:", critic(env.reset()))
-
-# something is wrong here we need to do some debug printing
-
-#print("Policy is:", policy)
-#print("Env.action is:", env.action_key)
-
 
 # DATA COLLECTOR
 
+combined_policy = TensorDictSequential(
+    policy,
+    policy2,
+)
+
 collector = SyncDataCollector(
     env,
-    policy,
+    combined_policy,
     device=vmas_device,
     storing_device=device,
     frames_per_batch=frames_per_batch,
     total_frames=total_frames,
 )
 
-# REPLAY BUFFER
+
+
+#REPLAY BUFFER
 
 replay_buffer = ReplayBuffer(
     storage=LazyTensorStorage(
@@ -361,49 +323,65 @@ loss_module2 = ClipPPOLoss(
 )
 
 loss_module.set_keys(  # We have to tell the loss where to find the keys
-    reward=env.reward_key,
-    action=env.action_key,
-    value=("agent_blue", "state_value"),
-    # These last 2 keys will be expanded to match the reward shape
-    done=("agent_blue", "done"),
-    terminated=("agent_blue", "terminated"),
-)
-#====================================================================
-loss_module2.set_keys(  # We have to tell the loss where to find the keys
-    reward=env.reward_key,
-    action=env.action_key,
+    reward=env.reward_keys[0],
+    action=env.action_keys[0],
     value=("agent_blue", "state_value"),
     # These last 2 keys will be expanded to match the reward shape
     done=("agent_blue", "done"),
     terminated=("agent_blue", "terminated"),
 )
 
+loss_module2.set_keys(  # We have to tell the loss where to find the keys
+    reward=env.reward_keys[1],
+    action=env.action_keys[1],
+    value=("agent_red", "state_value"),
+    # These last 2 keys will be expanded to match the reward shape
+    done=("agent_red", "done"),
+    terminated=("agent_red", "terminated"),
+)
 
 loss_module.make_value_estimator(
     ValueEstimators.GAE, gamma=gamma, lmbda=lmbda
 )  # We build GAE
+
+loss_module2.make_value_estimator(
+    ValueEstimators.GAE, gamma=gamma, lmbda=lmbda
+)  # We build GAE2
+
+
 GAE = loss_module.value_estimator
+GAE2 = loss_module2.value_estimator
 
 optim = torch.optim.Adam(loss_module.parameters(), lr)
+optim2 = torch.optim.Adam(loss_module2.parameters(), lr)
+
 
 pbar = tqdm(total=n_iters, desc="episode_reward_mean = 0")
 
+#some debug put in by George - to print out the tensordict structure
+# for tensordict_data in collector:
+#     print("TD:",tensordict_data)
+
+# print("=====================before===================================================")
+# print(collector)
+# exit(0)
 episode_reward_mean_list = []
 for tensordict_data in collector:
     tensordict_data.set(
         ("next", "agent_blue", "done"),
         tensordict_data.get(("next", "done"))
         .unsqueeze(-1)
-        .expand(tensordict_data.get_item_shape(("next", env.reward_key))),
+        .expand(tensordict_data.get_item_shape(("next", env.reward_keys[0]))),
     )
     tensordict_data.set(
         ("next", "agent_blue", "terminated"),
         tensordict_data.get(("next", "terminated"))
         .unsqueeze(-1)
-        .expand(tensordict_data.get_item_shape(("next", env.reward_key))),
+        .expand(tensordict_data.get_item_shape(("next", env.reward_keys[0]))),
     )
     # We need to expand the done and terminated to match the reward shape (this is expected by the value estimator)
-
+    # print(tensordict_data.get("agent_blue"))
+    # print(tensordict_data.shape)
     with torch.no_grad():
         GAE(
             tensordict_data,
@@ -414,11 +392,13 @@ for tensordict_data in collector:
     data_view = tensordict_data.reshape(-1)  # Flatten the batch size to shuffle data
     replay_buffer.extend(data_view)
 
+
+
     for _ in range(num_epochs):
         for _ in range(frames_per_batch // minibatch_size):
             subdata = replay_buffer.sample()
+            #print(subdata)
             loss_vals = loss_module(subdata)
-
             loss_value = (
                 loss_vals["loss_objective"]
                 + loss_vals["loss_critic"]
@@ -446,44 +426,19 @@ for tensordict_data in collector:
     pbar.update()
 
 
-# print("======= actor after training===========")
-# print(policy.state_dict())
-
-# new_module = torch.load("PPO_navigation_policy.pt",in_keys=[("agents", "observation")],
-#     out_keys=[("agents", "loc"), ("agents", "scale")],)
-# new_actor = ProbabilisticActor(new_module)
-#
 
 
+# torch.save(policy, "PPO_navigation_policy.pt")
+red_policy = torch.load("PPO_navigation_policy.pt", weights_only= False)
 
-torch.save(policy, "PPO_navigation_policy.pt")
-new_policy = torch.load("PPO_navigation_policy.pt", weights_only= False)
-
+new_combined_policy = TensorDictSequential(
+    red_policy,
+    policy2,
+)
 
 
 #print(type(new_policy))
-new_policy.eval()
-
-
-#
-#
-# obs = env.reset()
-# done = False
-# print(new_policy(obs).get("action"))
-# print(new_policy(obs).keys())
-#
-#
-# while not done:
-#     with torch.no_grad():
-#         dist = new_policy(obs)
-#         actions_dist = dist.get("action_key")
-#         actions = actions_dist.sample()
-#
-#     obs, rewards, dones, info = env.step(actions)
-#     done = dones.any()
-
-
-
+new_combined_policy.eval()
 
 
 plt.plot(episode_reward_mean_list)
@@ -497,7 +452,7 @@ while(i < 1000):
     with torch.no_grad():
        env.rollout(
            max_steps=max_steps,
-           policy=new_policy,
+           policy=new_combined_policy,
            callback=lambda env, _: env.render(),
            auto_cast_to_device=True,
            break_when_any_done=False,
