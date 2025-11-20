@@ -320,10 +320,10 @@ pbar = tqdm(total=n_iters, desc="episode_reward_mean = 0")
 #     print("TD:",tensordict_data)
 # exit(0)
 
-print("=====================before===================================================")
-print(collector)
-exit(0)
-print("=====================after====================================================")
+# print("=====================before===================================================")
+# print(collector)
+# exit(0)
+# print("=====================after====================================================")
 
 episode_reward_mean_list = []
 for tensordict_data in collector:

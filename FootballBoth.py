@@ -44,7 +44,7 @@ vmas_device = device  # The device where the simulator is run (VMAS can run on G
 
 # Sampling
 frames_per_batch = 30_000  # Number of team frames collected per training iteration
-n_iters = 1  # Number of sampling and training iterations
+n_iters = 1000  # Number of sampling and training iterations
 total_frames = frames_per_batch * n_iters
 
 # Training
@@ -277,9 +277,13 @@ critic2 = TensorDictModule(
 
 
 # DATA COLLECTOR
+blue_policy = torch.load("PPO_navigation_policy.pt", weights_only= False)
+
+
+# for blue start learning with a pre trained policy
 
 combined_policy = TensorDictSequential(
-    policy,
+    blue_policy,
     policy2,
 )
 
@@ -366,6 +370,7 @@ pbar = tqdm(total=n_iters, desc="episode_reward_mean = 0")
 # print(collector)
 # exit(0)
 episode_reward_mean_list = []
+episode_reward_mean_list2 = []
 for tensordict_data in collector:
     tensordict_data.set(
         ("next", "agent_blue", "done"),
@@ -374,19 +379,37 @@ for tensordict_data in collector:
         .expand(tensordict_data.get_item_shape(("next", env.reward_keys[0]))),
     )
     tensordict_data.set(
+        ("next", "agent_red", "done"),
+        tensordict_data.get(("next", "done"))
+        .unsqueeze(-1)
+        .expand(tensordict_data.get_item_shape(("next", env.reward_keys[1]))),
+    )
+    tensordict_data.set(
         ("next", "agent_blue", "terminated"),
         tensordict_data.get(("next", "terminated"))
         .unsqueeze(-1)
         .expand(tensordict_data.get_item_shape(("next", env.reward_keys[0]))),
     )
+    tensordict_data.set(
+        ("next", "agent_red", "terminated"),
+        tensordict_data.get(("next", "terminated"))
+        .unsqueeze(-1)
+        .expand(tensordict_data.get_item_shape(("next", env.reward_keys[1]))),
+    )
     # We need to expand the done and terminated to match the reward shape (this is expected by the value estimator)
     # print(tensordict_data.get("agent_blue"))
     # print(tensordict_data.shape)
+
     with torch.no_grad():
         GAE(
             tensordict_data,
             params=loss_module.critic_network_params,
             target_params=loss_module.target_critic_network_params,
+        )  # Compute GAE and add it to the data
+        GAE2(
+            tensordict_data,
+            params=loss_module2.critic_network_params,
+            target_params=loss_module2.target_critic_network_params,
         )  # Compute GAE and add it to the data
 
     data_view = tensordict_data.reshape(-1)  # Flatten the batch size to shuffle data
@@ -414,37 +437,71 @@ for tensordict_data in collector:
             optim.step()
             optim.zero_grad()
 
+        for _ in range(frames_per_batch // minibatch_size):
+            subdata = replay_buffer.sample()
+            #print(subdata)
+            loss_vals = loss_module2(subdata)
+            loss_value = (
+                loss_vals["loss_objective"]
+                + loss_vals["loss_critic"]
+                + loss_vals["loss_entropy"]
+            )
+
+            loss_value.backward()
+
+            torch.nn.utils.clip_grad_norm_(
+                loss_module2.parameters(), max_grad_norm
+            )  # Optional
+
+            optim2.step()
+            optim2.zero_grad()
+
     collector.update_policy_weights_()
 
     # Logging
-    done = tensordict_data.get(("next", "agent_blue", "done"))
+    done = tensordict_data.get(("next", "agent_blue", "done")) # or tensordict_data.get(("next", "agent_red", "done"))
     episode_reward_mean = (
         tensordict_data.get(("next", "agent_blue", "episode_reward"))[done].mean().item()
     )
     episode_reward_mean_list.append(episode_reward_mean)
-    pbar.set_description(f"episode_reward_mean = {episode_reward_mean}", refresh=False)
+
+    episode_reward_mean2 = (
+        tensordict_data.get(("next", "agent_red", "episode_reward"))[done].mean().item()
+    )
+    episode_reward_mean_list2.append(episode_reward_mean2)
+    pbar.set_description(f"episode_reward_mean_blue/red = {episode_reward_mean},{episode_reward_mean2}", refresh=False)
     pbar.update()
 
 
-
+# =============training loop finished, now rollout ==========================
 
 # torch.save(policy, "PPO_navigation_policy.pt")
-red_policy = torch.load("PPO_navigation_policy.pt", weights_only= False)
+#blue_policy = torch.load("PPO_navigation_policy.pt", weights_only= False)
 
 new_combined_policy = TensorDictSequential(
-    red_policy,
+    blue_policy,
     policy2,
 )
 
+torch.save(policy2, "policy_red.pt")
+torch.save(blue_policy, "policy_blue.pt")
 
 #print(type(new_policy))
 new_combined_policy.eval()
 
 
+
 plt.plot(episode_reward_mean_list)
 plt.xlabel("Training iterations")
 plt.ylabel("Reward")
-plt.title("Episode reward mean")
+plt.title("Episode reward mean blue")
+plt.show()
+
+
+plt.plot(episode_reward_mean_list2)
+plt.xlabel("Training iterations")
+plt.ylabel("Reward")
+plt.title("Episode reward mean red")
 plt.show()
 
 i = 0
